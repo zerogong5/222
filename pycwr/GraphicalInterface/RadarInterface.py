@@ -14,6 +14,10 @@ from ..io import read_auto
 from ..io.util import radar_format
 from ..draw.SingleRadarPlot import RadarGraph
 from ..draw.SingleRadarPlotMap import RadarGraphMap
+from ..draw.RadarPlot import Graph, GraphMap, plot_xy, plot_lonlat_map
+from ..retrieve import WindField, HID
+import cartopy.crs as ccrs
+import numpy as np
 from ..configure.location_config import last_open_dir
 from glob import glob
 import json
@@ -352,6 +356,129 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.org_lat = self.my_info.lat
         self.org_lon = self.my_info.lon
         self.org_height = self.my_info.height
+
+    @pyqtSlot()
+    def on_actioncr_triggered(self):
+        if self.radar_dat is None:
+            QMessageBox.warning(self, "提示", "请先打开雷达基数据")
+            return
+        self.MplWidget.canvas.update()
+        self.MplWidget.canvas.flush_events()
+        try:
+            self.fig.clf()
+            self.ax.clear()
+            self.cax.clear()
+        except AttributeError:
+            pass
+        if not self.actionwithmap.isChecked():
+            self.fig, self.ax, self.cax = self.MplWidget.canvas.get_fig_ax()
+            self.ax.set_facecolor((0.95, 0.95, 0.95))
+            Graph(self.radar_dat).plot_crf(self.ax)
+        else:
+            self.fig, self.ax, self.cax = self.MplWidget.canvas.get_fig_ax_map()
+            self.ax.set_facecolor((0.95, 0.95, 0.95))
+            GraphMap(self.radar_dat, ccrs.PlateCarree()).plot_crf_map(self.ax)
+        self.MplWidget.canvas.draw()
+
+    @pyqtSlot()
+    def on_actioncappi_triggered(self):
+        if self.radar_dat is None:
+            QMessageBox.warning(self, "提示", "请先打开雷达基数据")
+            return
+        height, ok = QInputDialog.getInt(self, "CAPPI", "输入CAPPI高度(米)", 3000, 0, 20000)
+        if not ok:
+            return
+        self.MplWidget.canvas.update()
+        self.MplWidget.canvas.flush_events()
+        try:
+            self.fig.clf()
+            self.ax.clear()
+            self.cax.clear()
+        except AttributeError:
+            pass
+        if not self.actionwithmap.isChecked():
+            self.fig, self.ax, self.cax = self.MplWidget.canvas.get_fig_ax()
+            self.ax.set_facecolor((0.95, 0.95, 0.95))
+            Graph(self.radar_dat).plot_cappi(self.ax, level_height=height)
+        else:
+            self.fig, self.ax, self.cax = self.MplWidget.canvas.get_fig_ax_map()
+            self.ax.set_facecolor((0.95, 0.95, 0.95))
+            GraphMap(self.radar_dat, ccrs.PlateCarree()).plot_cappi_map(self.ax, level_height=height)
+        self.MplWidget.canvas.draw()
+
+    @pyqtSlot()
+    def on_actionVVP_triggered(self):
+        if self.radar_dat is None:
+            QMessageBox.warning(self, "提示", "请先打开雷达基数据")
+            return
+        level = self.find_level_in_groupBox()
+        vr = self.radar_dat.fields[level]['V']
+        az = self.radar_dat.fields[level]['azimuth']
+        el = self.radar_dat.scan_info.fixed_angle[level].values
+        u, v = WindField.VVP(az.values, el, vr.values, az_num=9, bin_num=9)
+        self.MplWidget.canvas.update()
+        self.MplWidget.canvas.flush_events()
+        try:
+            self.fig.clf()
+            self.ax.clear()
+            self.cax.clear()
+        except AttributeError:
+            pass
+        step = 5
+        if not self.actionwithmap.isChecked():
+            self.fig, self.ax, self.cax = self.MplWidget.canvas.get_fig_ax()
+            self.ax.set_facecolor((0.95, 0.95, 0.95))
+            x = vr.x.values[::step, ::step] / 1000.
+            y = vr.y.values[::step, ::step] / 1000.
+            self.ax.quiver(x, y, u[::step, ::step], v[::step, ::step])
+        else:
+            self.fig, self.ax, self.cax = self.MplWidget.canvas.get_fig_ax_map()
+            self.ax.set_facecolor((0.95, 0.95, 0.95))
+            lon = vr.lon.values[::step, ::step]
+            lat = vr.lat.values[::step, ::step]
+            self.ax.quiver(lon, lat, u[::step, ::step], v[::step, ::step], transform=ccrs.PlateCarree())
+        self.MplWidget.canvas.draw()
+
+    @pyqtSlot()
+    def on_actionVAD_triggered(self):
+        QMessageBox.information(self, "提示", "垂直风场功能暂未实现")
+
+    @pyqtSlot()
+    def on_actionstorm_Identification_triggered(self):
+        if self.radar_dat is None:
+            QMessageBox.warning(self, "提示", "请先打开雷达基数据")
+            return
+        level = self.find_level_in_groupBox()
+        field = self.radar_dat.fields[level]
+        required = ['dBZ', 'ZDR', 'KDP', 'CC']
+        if not all(k in field for k in required):
+            QMessageBox.warning(self, "提示", "缺少双偏振变量，无法分类")
+            return
+        dBZ = np.where(field['CC'] > 0.9, field['dBZ'], np.nan)
+        KDP = np.where(field['CC'] > 0.9, field['KDP'], np.nan)
+        ZDR = np.where(field['CC'] > 0.9, field['ZDR'], np.nan)
+        CC = np.where(field['CC'] > 0.9, field['CC'], np.nan)
+        hc = HID.fhc_HCL(dBZ=dBZ, ZDR=ZDR, KDP=KDP, CC=CC)
+        self.MplWidget.canvas.update()
+        self.MplWidget.canvas.flush_events()
+        try:
+            self.fig.clf()
+            self.ax.clear()
+            self.cax.clear()
+        except AttributeError:
+            pass
+        bounds = np.arange(0.5, 10.6, 1)
+        ticks = np.arange(1, 11, 1)
+        if not self.actionwithmap.isChecked():
+            self.fig, self.ax, self.cax = self.MplWidget.canvas.get_fig_ax()
+            self.ax.set_facecolor((0.95, 0.95, 0.95))
+            plot_xy(self.ax, field['x'], field['y'], hc, cmap='CN_hcl', bounds=bounds, cbar_ticks=ticks)
+        else:
+            self.fig, self.ax, self.cax = self.MplWidget.canvas.get_fig_ax_map()
+            self.ax.set_facecolor((0.95, 0.95, 0.95))
+            plot_lonlat_map(self.ax, field['lon'], field['lat'], hc, ccrs.PlateCarree(),
+                            cmap='CN_hcl', bounds=bounds, cbar_ticks=ticks)
+        self.MplWidget.canvas.draw()
 
     def find_checked_radiobutton(self, radiobuttons):
         ''' find the checked radiobutton '''
