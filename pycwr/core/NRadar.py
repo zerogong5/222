@@ -140,15 +140,33 @@ class PRD(object):
         regrid radar object by azimuth
         :return:
         """
+        def _swap_sort_unique(ds, decimals=3):
+            """
+            swap dims: time -> azimuth, then ensure azimuth index is unique
+            (required by xarray .sel(..., method="nearest") on azimuth)
+            """
+            ds2 = ds.swap_dims({"time": "azimuth"})
+            az = np.asarray(ds2["azimuth"].values, dtype=float)
+
+            # stable de-dup (handles float jitter)
+            az_key = np.round(az, decimals=decimals)
+            _, idx = np.unique(az_key, return_index=True)
+
+            if len(idx) < len(az_key):
+                idx.sort()
+                ds2 = ds2.isel(azimuth=idx)
+
+            return ds2.sortby("azimuth")
+
         if inplace:
             for isweep in self.scan_info.sweep.values:
-                self.fields[isweep] = self.fields[isweep].swap_dims({"time": "azimuth"}).sortby("azimuth") ##对数据重新排序
+                self.fields[isweep] = _swap_sort_unique(self.fields[isweep]) ##对数据重新排序(并确保azimuth唯一)
             return None
         else:
             prd_dat = PRD_AZ()
             prd_dat.scan_info = self.scan_info
             for isweep in self.scan_info.sweep.values:
-                prd_dat.fields.append(self.fields[isweep].swap_dims({"time": "azimuth"}).sortby("azimuth"))
+                prd_dat.fields.append(_swap_sort_unique(self.fields[isweep]))
             return prd_dat
 
     def add_product_CR_xy(self, XRange, YRange):
